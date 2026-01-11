@@ -3,332 +3,162 @@
 namespace App\Http\Controllers;
 
 use App\Models\Mahasiswa;
-use App\Models\Prodi;
-use App\Models\Dosen;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use App\Exports\MahasiswaExport;
 use App\Imports\MahasiswaImport;
 use Maatwebsite\Excel\Facades\Excel;
-use Maatwebsite\Excel\Validators\ValidationException;
 use Barryvdh\DomPDF\Facade\Pdf;
-use SimpleSoftwareIO\QrCode\Facades\QrCode;
+use Yajra\DataTables\Facades\DataTables;
 
 class MahasiswaController extends Controller
 {
-    // ========================
-    // CRUD DATA MAHASISWA
-    // ========================
-
-    // 1. MENAMPILKAN DATA (READ)
-    public function index()
+    public function index(Request $request)
     {
-        // Menggunakan with() untuk optimalisasi query jika relasi digunakan
-        // Jika tidak ada relasi di model, hapus with(['prodi', 'dosen'])
-        $mahasiswas = Mahasiswa::latest()->get();
-        return view('mahasiswa.index', compact('mahasiswas'));
-    }
+        if ($request->ajax()) {
+            $data = Mahasiswa::latest()->get(); 
+            
+            return DataTables::of($data)
+                ->addIndexColumn()
+                ->addColumn('status_badge', function($row){
+                    $color = match($row->status) {
+                        'diverifikasi' => 'green',
+                        'ditolak' => 'red',
+                        default => 'yellow'
+                    };
+                    return '<span class="px-3 py-1 rounded-full text-xs font-bold bg-'.$color.'-100 text-'.$color.'-800 border border-'.$color.'-200">'.ucfirst($row->status).'</span>';
+                })
+                ->addColumn('action', function($row){
+                    $btn = '<div class="flex justify-center items-center gap-2">';
+                    
+                    // --- TOMBOL VERIFIKASI (Hanya muncul jika status 'baru') ---
+                    if ($row->status == 'baru') {
+                        $btn .= '<button data-id="'.$row->id.'" class="verifikasi-btn flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow transition-transform transform hover:-translate-y-0.5" title="Verifikasi Mahasiswa">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                                    Verifikasi
+                                 </button>';
+                    }
 
-    // 2. FORM TAMBAH DATA (CREATE)
-    public function create()
-    {
-        $prodis = Prodi::all();
-        $dosens = Dosen::all();
-        return view('mahasiswa.create', compact('prodis', 'dosens'));
-    }
+                    // --- TOMBOL LAINNYA ---
 
-    // 3. PROSES SIMPAN DATA (STORE)
-    public function store(Request $request)
-    {
-        // Validasi, sesuaikan dengan kolom database Anda
-        $request->validate([
-            'nim'      => 'required|unique:mahasiswas,nim',
-            'nama'     => 'required|string|max:255',
-            'angkatan' => 'required|numeric',
-            // 'prodi_id' => 'required|exists:prodis,id', // Aktifkan jika relasi sudah ada
-            // 'dosen_id' => 'required|exists:dosens,id', // Aktifkan jika relasi sudah ada
-            'foto'     => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
-        ]);
+                    // Tombol Edit
+                    $btn .= '<a href="javascript:void(0)" data-id="'.$row->id.'" class="edit flex items-center justify-center bg-blue-900 hover:bg-blue-800 text-white w-8 h-8 rounded-lg shadow transition-transform transform hover:-translate-y-0.5" title="Edit Data">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                            </a>';
 
-        $fotoPath = null;
-        if ($request->hasFile('foto')) {
-            $fotoPath = $request->file('foto')->store('fotos', 'public');
+                    // Tombol PDF (Hanya muncul jika SUDAH diverifikasi)
+                    if ($row->status == 'diverifikasi') {
+                        $btn .= '<a href="'.route('mahasiswa.cetakPdf', $row->id).'" target="_blank" class="flex items-center justify-center bg-yellow-500 hover:bg-yellow-600 text-white w-8 h-8 rounded-lg shadow transition-transform transform hover:-translate-y-0.5" title="Cetak Kartu">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                                </a>';
+                    }
+
+                    // Tombol Hapus
+                    $btn .= '<a href="javascript:void(0)" data-id="'.$row->id.'" class="delete flex items-center justify-center bg-red-600 hover:bg-red-700 text-white w-8 h-8 rounded-lg shadow transition-transform transform hover:-translate-y-0.5" title="Hapus">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </a>';
+                             
+                    $btn .= '</div>';
+                    return $btn;
+                })
+                ->rawColumns(['status_badge', 'action'])
+                ->make(true);
         }
-
-        Mahasiswa::create([
-            'nim'             => $request->nim,
-            'nama'            => $request->nama,
-            'angkatan'        => $request->angkatan,
-            'prodi_id'        => $request->prodi_id ?? null,
-            'dosen_id'        => $request->dosen_id ?? null,
-            'pilihan_prodi_1' => $request->prodi_1 ?? '-', // Fallback jika kolom ada
-            'foto'            => $fotoPath,
-            'status'          => 'baru',
-        ]);
-
-        return redirect()->route('mahasiswa.index')->with('success', 'Data Mahasiswa Berhasil Ditambahkan');
+        
+        return view('mahasiswa.index');
     }
 
-    // 4. MENAMPILKAN DETAIL DATA (SHOW)
-    public function show(Mahasiswa $mahasiswa)
-    {
-        return view('mahasiswa.show', compact('mahasiswa'));
-    }
-
-    // 5. FORM EDIT DATA (EDIT)
-    public function edit(Mahasiswa $mahasiswa)
-    {
-        $prodis = Prodi::all();
-        $dosens = Dosen::all();
-        return view('mahasiswa.edit', compact('mahasiswa', 'prodis', 'dosens'));
-    }
-
-    // 6. PROSES UPDATE DATA (UPDATE)
-    public function update(Request $request, Mahasiswa $mahasiswa)
-    {
-        $request->validate([
-            'nim'      => 'required|unique:mahasiswas,nim,' . $mahasiswa->id,
-            'nama'     => 'required|string|max:255',
-            'angkatan' => 'required|numeric',
-            'foto'     => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
-        ]);
-
-        $data = $request->except(['foto']);
-
-        // Upload Foto Baru & Hapus Lama
-        if ($request->hasFile('foto')) {
-            if ($mahasiswa->foto && Storage::disk('public')->exists($mahasiswa->foto)) {
-                Storage::disk('public')->delete($mahasiswa->foto);
-            }
-            $data['foto'] = $request->file('foto')->store('fotos', 'public');
-        }
-
-        $mahasiswa->update($data);
-
-        return redirect()->route('mahasiswa.index')->with('success', 'Data Mahasiswa Berhasil Diupdate');
-    }
-
-    // 7. HAPUS DATA (DELETE)
-    public function destroy(Mahasiswa $mahasiswa)
-    {
-        if ($mahasiswa->foto && Storage::disk('public')->exists($mahasiswa->foto)) {
-            Storage::disk('public')->delete($mahasiswa->foto);
-        }
-
-        $mahasiswa->delete();
-        return redirect()->route('mahasiswa.index')->with('success', 'Data Mahasiswa Berhasil Dihapus');
-    }
-
-    // ========================
-    // FITUR VERIFIKASI
-    // ========================
-
+    // --- UPDATE: Fungsi Verifikasi jadi JSON untuk AJAX ---
     public function verifikasi($id)
     {
         $mhs = Mahasiswa::findOrFail($id);
         $mhs->update(['status' => 'diverifikasi']);
-        return redirect()->back()->with('success', 'Data Mahasiswa Berhasil Diverifikasi!');
+
+        // Return JSON agar DataTables bisa refresh tanpa reload
+        return response()->json(['success' => 'Mahasiswa berhasil diverifikasi!']);
     }
 
-    public function tolak($id)
+    // --- Fungsi Create/Update ---
+    public function store(Request $request)
     {
+        Mahasiswa::updateOrCreate(
+            ['id' => $request->mahasiswa_id], 
+            [
+                'nim'             => $request->nim,
+                'nama'            => $request->nama,
+                'pilihan_prodi_1' => $request->prodi,
+                'user_id'         => 1, 
+                'nik'             => $request->nik ?? rand(3200000000000000, 3299999999999999), 
+                'angkatan'        => date('Y'),
+                // Jika sedang edit, pertahankan status lama. Jika baru, set 'baru'.
+                'status'          => $request->mahasiswa_id ? Mahasiswa::find($request->mahasiswa_id)->status : 'baru', 
+                'tempat_lahir'    => 'Bandung',
+                'tgl_lahir'       => '2005-01-01',
+                'no_hp'           => '08123456789',
+                'alamat'          => 'Alamat Default via AJAX',
+            ]
+        );        
+        return response()->json(['success' => 'Data berhasil disimpan.']);
+    }
+
+    public function edit($id)
+    {
+        $mahasiswa = Mahasiswa::find($id);
+        return response()->json($mahasiswa);
+    }
+
+    public function destroy($id)
+    {
+        $mhs = Mahasiswa::find($id);
+        if ($mhs->foto && Storage::disk('public')->exists($mhs->foto)) {
+            Storage::disk('public')->delete($mhs->foto);
+        }
+        $mhs->delete();
+        return response()->json(['success' => 'Data berhasil dihapus.']);
+    }
+
+    // --- Fungsi Pendukung Lain ---
+    public function tolak($id) {
         $mhs = Mahasiswa::findOrFail($id);
         $mhs->update(['status' => 'ditolak']);
         return redirect()->back()->with('error', 'Pendaftaran Ditolak.');
     }
-
-    // ========================
-    // FITUR CETAK PDF
-    // ========================
-
-    // 1. Cetak Kartu Per Mahasiswa
-    public function cetakPdf($id)
-    {
+    public function cetakPdf($id) {
         $mahasiswa = Mahasiswa::findOrFail($id);
         $pdf = Pdf::loadView('mahasiswa.pdf_kartu', compact('mahasiswa'));
         $pdf->setPaper('a4', 'portrait');
         return $pdf->stream('KRS_' . $mahasiswa->nim . '.pdf');
     }
-
-    // 2. Cetak Laporan Rekap Semua Mahasiswa
-    public function cetakLaporan()
-    {
-        // Ambil semua data
+    public function cetakLaporan() {
         $mahasiswa = Mahasiswa::all(); 
-
-        // Load View PDF
         $pdf = Pdf::loadView('mahasiswa.laporan_pdf', compact('mahasiswa'));
-        
-        // Atur Kertas
         $pdf->setPaper('a4', 'landscape');
-
-        // Tampilkan
         return $pdf->stream('Laporan_Data_Mahasiswa_PMB.pdf');
     }
-
-    // ========================
-    // FITUR EXPORT / IMPORT EXCEL
-    // ========================
-
-    // 1. EXPORT CSV MANUAL (Native PHP - Tanpa Library Berat)
-    public function exportExcel()
-    {
+    public function generateDummyCsv() {}
+    public function exportExcel() {
         $fileName = 'Data_Mahasiswa_PMB_' . date('Y-m-d_H-i') . '.csv';
         $mahasiswa = Mahasiswa::latest()->get();
-
-        $headers = array(
-            "Content-type"        => "text/csv",
-            "Content-Disposition" => "attachment; filename=$fileName",
-            "Pragma"              => "no-cache",
-            "Cache-Control"       => "must-revalidate, post-check=0, pre-check=0",
-            "Expires"             => "0"
-        );
-
-        $columns = array('No', 'NIM/No.Daftar', 'Nama Lengkap', 'NIK', 'Tempat Lahir', 'Tanggal Lahir', 'Jenis Kelamin', 'No HP', 'Alamat', 'Asal Sekolah', 'Jurusan Sekolah', 'Tahun Lulus', 'Pilihan Prodi 1', 'Pilihan Prodi 2', 'Status', 'Waktu Daftar');
-
+        $headers = ["Content-type" => "text/csv", "Content-Disposition" => "attachment; filename=$fileName", "Pragma" => "no-cache", "Cache-Control" => "must-revalidate, post-check=0, pre-check=0", "Expires" => "0"];
+        $columns = array('No', 'NIM', 'Nama', 'Prodi', 'Status', 'Waktu Daftar');
         $callback = function() use($mahasiswa, $columns) {
             $file = fopen('php://output', 'w');
-            
-            // Tulis Header Kolom
             fputcsv($file, $columns);
-
-            // Tulis Data Baris per Baris
             foreach ($mahasiswa as $key => $mhs) {
-                $row['No']              = $key + 1;
-                $row['NIM']             = $mhs->nim;
-                $row['Nama']            = $mhs->nama;
-                
-                // Tambahkan tanda kutip satu (') agar Excel membacanya sebagai teks, bukan angka ilmiah
-                $row['NIK']             = "'" . $mhs->nik; 
-                
-                $row['Tempat Lahir']    = $mhs->tempat_lahir;
-                $row['Tanggal Lahir']   = $mhs->tgl_lahir;
-                $row['Jenis Kelamin']   = $mhs->jenis_kelamin == 'L' ? 'Laki-laki' : 'Perempuan';
-                $row['No HP']           = "'" . $mhs->no_hp;
-                $row['Alamat']          = $mhs->alamat;
-                $row['Asal Sekolah']    = $mhs->asal_sekolah;
-                $row['Jurusan Sekolah'] = $mhs->jurusan_sekolah;
-                $row['Tahun Lulus']     = $mhs->tahun_lulus;
-                $row['Prodi 1']         = $mhs->pilihan_prodi_1;
-                $row['Prodi 2']         = $mhs->pilihan_prodi_2;
-                $row['Status']          = ucfirst($mhs->status);
-                $row['Waktu']           = $mhs->created_at->format('Y-m-d H:i:s');
-
-                fputcsv($file, array(
-                    $row['No'], 
-                    $row['NIM'], 
-                    $row['Nama'], 
-                    $row['NIK'], 
-                    $row['Tempat Lahir'],
-                    $row['Tanggal Lahir'],
-                    $row['Jenis Kelamin'],
-                    $row['No HP'],
-                    $row['Alamat'],
-                    $row['Asal Sekolah'],
-                    $row['Jurusan Sekolah'],
-                    $row['Tahun Lulus'],
-                    $row['Prodi 1'],
-                    $row['Prodi 2'],
-                    $row['Status'],
-                    $row['Waktu']
-                ));
-            }
-
-            fclose($file);
-        };
-
-        return response()->stream($callback, 200, $headers);
-    }
-// ... kode sebelumnya ...
-
-    // ============================================
-    // FUNGSI KHUSUS: GENERATE DUMMY CSV (102 DATA)
-    // ============================================
-    public function generateDummyCsv()
-    {
-        $fileName = '102_Data_Mahasiswa_Dummy.csv';
-        
-        $headers = array(
-            "Content-type"        => "text/csv",
-            "Content-Disposition" => "attachment; filename=$fileName",
-            "Pragma"              => "no-cache",
-            "Cache-Control"       => "must-revalidate, post-check=0, pre-check=0",
-            "Expires"             => "0"
-        );
-
-        // Header sesuai urutan database/import
-        // Pastikan urutan ini SAMA dengan file MahasiswaImport.php Anda
-        $columns = array('nim', 'nama', 'nik', 'angkatan', 'pilihan_prodi_1', 'tempat_lahir', 'tgl_lahir', 'jenis_kelamin', 'no_hp', 'alamat', 'asal_sekolah', 'jurusan_sekolah', 'tahun_lulus');
-
-        // Data Random
-        $prodis = [
-            'S1 Sistem Informasi', 
-            'S1 Teknik Informatika', 
-            'D3 Manajemen Informatika', 
-            'S1 Agribisnis', 
-            'S1 Teknologi Pangan'
-        ];
-
-        $callback = function() use($columns, $prodis) {
-            $file = fopen('php://output', 'w');
-            fputcsv($file, $columns); // Tulis Header
-
-            // Loop 102 kali
-            for ($i = 1; $i <= 102; $i++) {
-                
-                // Random Data
-                $nim    = '24' . str_pad($i, 4, '0', STR_PAD_LEFT); // 240001, 240002...
-                $nama   = "Calon Mahasiswa Baru " . $i;
-                $nik    = "3204" . rand(100000000000, 999999999999);
-                $prodi  = $prodis[array_rand($prodis)]; // Pilih prodi acak
-                $jk     = ($i % 2 == 0) ? 'P' : 'L'; // Selang seling L/P
-                
-                $row = [
-                    $nim,
-                    $nama,
-                    $nik,
-                    '2024',         // Angkatan
-                    $prodi,         // Prodi
-                    'Bandung',      // Tempat Lahir
-                    '2005-01-01',   // Tgl Lahir
-                    $jk,            // JK
-                    '08' . rand(100000000, 999999999), // No HP
-                    'Jl. Raya Percobaan No. ' . $i, // Alamat
-                    'SMA Negeri ' . rand(1, 10) . ' Bandung', // Asal Sekolah
-                    'IPA',          // Jurusan Sekolah
-                    '2023'          // Tahun Lulus
-                ];
-
+                $row['No'] = $key + 1; $row['NIM'] = $mhs->nim; $row['Nama'] = $mhs->nama; $row['Prodi'] = $mhs->pilihan_prodi_1; $row['Status'] = ucfirst($mhs->status); $row['Waktu'] = $mhs->created_at->format('Y-m-d H:i:s');
                 fputcsv($file, $row);
             }
-
             fclose($file);
         };
-
         return response()->stream($callback, 200, $headers);
     }
-    // 2. IMPORT EXCEL (Tetap Pakai Maatwebsite untuk Membaca File)
-    public function import(Request $request)
-    {
-        $request->validate([
-            'file' => 'required|mimes:xlsx,xls,csv|max:2048',
-        ]);
-
+    public function import(Request $request) {
+        $request->validate(['file' => 'required|mimes:xlsx,xls,csv|max:2048']);
         try {
             Excel::import(new MahasiswaImport, $request->file('file'));
             return redirect()->back()->with('success', 'Data Mahasiswa berhasil diimport!');
-        } catch (ValidationException $e) {
-            $failures = $e->failures();
-            $errorMsg = 'Gagal Import:<br><ul>';
-            
-            foreach ($failures as $failure) {
-                $errorMsg .= '<li>Baris ' . $failure->row() . ': ' . implode(', ', $failure->errors()) . '</li>';
-            }
-            $errorMsg .= '</ul>';
-
-            return redirect()->back()->with('error', $errorMsg);
         } catch (\Exception $e) {
-            return redirect()->back()->with('error', 'Terjadi kesalahan sistem: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Terjadi kesalahan: ' . $e->getMessage());
         }
     }
 }

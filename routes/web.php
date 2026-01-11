@@ -52,7 +52,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     // --- MASTER DATA DOSEN ---
     Route::resource('dosen', DosenController::class);
-
+Route::resource('mahasiswa', App\Http\Controllers\MahasiswaController::class);
+Route::post('/mahasiswa/{id}/verifikasi', [App\Http\Controllers\MahasiswaController::class, 'verifikasi'])->name('mahasiswa.verifikasi');
 });
 
 require __DIR__.'/auth.php';
